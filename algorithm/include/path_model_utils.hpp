@@ -1,13 +1,3 @@
-/*
- * @Author: puyu <yuu.pu@foxmail.com>
- * @Date: 2025-01-XX XX:XX:XX
- * @LastEditTime: 2025-01-XX XX:XX:XX
- * @FilePath: /algorithm/include/path_model_utils.hpp
- * Copyright 2025 puyu, All Rights Reserved.
- * 
- * 路径模型工具函数（算法层）
- */
-
 #pragma once
 #ifndef __PATH_MODEL_UTILS_HPP
 #define __PATH_MODEL_UTILS_HPP

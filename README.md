@@ -1,20 +1,3 @@
-# CILQR Visualization Project
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
-[![CMake](https://img.shields.io/badge/CMake-3.10+-green.svg)](https://cmake.org/)
-
-本项目是一个完整的 CILQR（约束迭代线性二次调节器）算法可视化系统，包含算法核心库和两个可视化工具，用于展示和测试 CILQR 算法在自动驾驶运动规划中的应用。
-
-## ✨ 特性
-
-- 🎯 **统一的优化器接口**：基于策略模式的优化器基类系统，易于扩展新算法
-- 🎬 **动画可视化**：生成轨迹规划的 GIF 动画
-- 🌐 **Web 交互界面**：实时调整参数并查看优化结果
-- 📊 **多种场景支持**：直道、弯道、借道超车等场景
-- 🔧 **可扩展架构**：添加新算法无需修改前端代码
-
-## 🚀 快速开始
 
 ## 项目结构
 
@@ -257,45 +240,3 @@ python3 web_visualize.py
 
 **http://localhost:8081**
 
-## 🏗️ 架构设计
-
-本项目采用统一的优化器基类系统，支持轻松扩展新算法：
-
-```
-前端层 (animation/single_frame)
-    ↓
-适配器层 (CILQRAdapter)
-    ↓
-优化器基类系统 (TrajectoryOptimizer)
-    ↓
-具体算法实现 (CILQROptimizer)
-    ↓
-算法核心 (CILQRSolver)
-```
-
-详细设计文档请参考：
-- [统一架构说明](UNIFIED_ARCHITECTURE.md)
-- [优化器设计文档](algorithm/TRAJECTORY_OPTIMIZER_DESIGN.md)
-- [使用指南](algorithm/OPTIMIZER_USAGE.md)
-
-## 🤝 贡献指南
-
-欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详细信息。
-
-## 📄 许可证
-
-本项目采用 [MIT License](LICENSE)。
-
-## 📚 相关文档
-
-- [GitHub 设置指南](GITHUB_SETUP.md) - 如何将项目上传到 GitHub
-- [架构总结](ARCHITECTURE_SUMMARY.md) - 项目架构概述
-- [编译测试结果](BUILD_TEST_RESULTS.md) - 编译和测试信息
-
-## 🙏 致谢
-
-- 使用了 [fmt](https://github.com/fmtlib/fmt) 格式化库
-- 使用了 [spdlog](https://github.com/gabime/spdlog) 日志库
-- 使用了 [yaml-cpp](https://github.com/jbeder/yaml-cpp) YAML 解析库
-- 使用了 [jsoncpp](https://github.com/open-source-parsers/jsoncpp) JSON 解析库
-- 使用了 [Eigen](https://eigen.tuxfamily.org/) 线性代数库

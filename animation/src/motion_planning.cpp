@@ -27,6 +27,16 @@
 
 namespace plt = matplotlibcpp;
 
+// 辅助函数：执行 Python 代码
+inline void exec_python(const std::string& code) {
+    matplotlibcpp::detail::_interpreter::get();
+    int ret = PyRun_SimpleString(code.c_str());
+    if (ret != 0) {
+        PyErr_Print();
+        SPDLOG_WARN("Python execution failed for: {}", code);
+    }
+}
+
 int main(int argc, char** argv) {
     int opt;
     const char* optstring = "c:";
@@ -225,8 +235,44 @@ int main(int argc, char** argv) {
                  ego_state_5d[0], ego_state_5d[1], ego_state_5d[2], 
                  ego_state_5d[3], ego_state_5d[4]);
 
+    // 历史数据存储（用于右侧实时图表）
+    std::vector<double> time_history;
+    std::vector<double> x_history;
+    std::vector<double> y_history;
+    std::vector<double> velocity_history;
+    std::vector<double> acceleration_history;
+    std::vector<double> jerk_history;
+    std::vector<double> kappa_history;
+    double last_acceleration = 0.0;  // 用于计算jerk
+
+    // 设置图形大小（更大的窗口以容纳左右两个区域）
+    // figure_size 会自动创建 figure，不需要再调用 figure()
+    plt::figure_size(1600, 800);
+    
+    // 使用 Python 直接执行 subplot 命令来设置布局（只在初始化时调用一次）
+    // 使用 subplot2grid 创建更灵活的布局：
+    // - 左侧大图：占据前2列的所有行（占据大部分空间）
+    // - 右侧小图：占据第3列，分成5个小图
+    exec_python("import matplotlib.pyplot as plt");
+    exec_python("fig = plt.gcf()");
+    exec_python("fig.clear()");  // 清除图形
+    
+    // 预先创建所有 subplot（只调用一次，避免在循环中重复调用）
+    // 调整布局：左侧动画往左移动一点（减少右侧空间，增加左侧空间）
+    exec_python("ax_main = plt.subplot2grid((5, 3), (0, 0), 5, 2)");
+    exec_python("ax_path = plt.subplot2grid((5, 3), (0, 2), 1, 1)");
+    exec_python("ax_vel = plt.subplot2grid((5, 3), (1, 2), 1, 1)");
+    exec_python("ax_acc = plt.subplot2grid((5, 3), (2, 2), 1, 1)");
+    exec_python("ax_jerk = plt.subplot2grid((5, 3), (3, 2), 1, 1)");
+    exec_python("ax_kappa = plt.subplot2grid((5, 3), (4, 2), 1, 1)");
+    // 调整子图间距，让左侧动画往左移动
+    exec_python("plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05, wspace=0.3, hspace=0.3)");
+
     for (double t = 0.; t < max_simulation_time; t += delta_t) {
         size_t index = t / delta_t;
+        
+        // 左侧：原有动画（使用预先创建的 subplot，避免重复调用 Python）
+        exec_python("plt.sca(ax_main)");  // 切换到主图（比 subplot2grid 快）
         plt::cla();
         for (size_t i = 0; i < borders.size(); ++i) {
             if (i == 0 || i == borders.size() - 1) {
@@ -347,6 +393,109 @@ int main(int argc, char** argv) {
 
         plt::xlim(visual_x_min, visual_x_max);
         plt::ylim(visual_y_min, visual_y_max);
+        // 移除标题
+
+        // 收集历史数据
+        time_history.push_back(t);
+        x_history.push_back(ego_state_current_5d[0]);
+        y_history.push_back(ego_state_current_5d[1]);
+        velocity_history.push_back(ego_state_current_5d[2]);
+        double current_acceleration = new_u.row(0)[0];
+        acceleration_history.push_back(current_acceleration);
+        
+        // 计算jerk（加速度的变化率）
+        double current_jerk = 0.0;
+        if (time_history.size() > 1) {
+            current_jerk = (current_acceleration - last_acceleration) / delta_t;
+        }
+        jerk_history.push_back(current_jerk);
+        last_acceleration = current_acceleration;
+        
+        kappa_history.push_back(ego_state_current_5d[4]);
+
+        // 右侧：实时图表（使用预先创建的 subplot，避免重复调用 Python）
+        if (time_history.size() > 1) {
+            // 1. 路径图（x-y轨迹）
+            exec_python("plt.sca(ax_path)");  // 切换到路径图（比 subplot2grid 快）
+            plt::cla();
+            
+            // 绘制自车轨迹（蓝色）
+            plt::plot(x_history, y_history, {{"color", "blue"}, {"linewidth", "1.5"}});
+            std::vector<double> current_x = {x_history.back()};
+            std::vector<double> current_y = {y_history.back()};
+            plt::plot(current_x, current_y, {{"marker", "o"}, {"color", "red"}, {"markersize", "6"}, {"linestyle", "none"}});
+            
+            // 绘制障碍物轨迹和当前位置
+            for (size_t idx = 1; idx < vehicle_num; ++idx) {
+                if (index < routing_lines[idx].x.size() && index < routing_lines[idx].y.size()) {
+                    // 绘制障碍物的历史轨迹（从开始到当前时间）
+                    std::vector<double> obs_x_history(routing_lines[idx].x.begin(), routing_lines[idx].x.begin() + index + 1);
+                    std::vector<double> obs_y_history(routing_lines[idx].y.begin(), routing_lines[idx].y.begin() + index + 1);
+                    plt::plot(obs_x_history, obs_y_history, {{"color", "gray"}, {"linewidth", "1.0"}, {"linestyle", "--"}});
+                    
+                    // 绘制障碍物当前位置（用三角形标记）
+                    std::vector<double> obs_current_x = {routing_lines[idx].x[index]};
+                    std::vector<double> obs_current_y = {routing_lines[idx].y[index]};
+                    plt::plot(obs_current_x, obs_current_y, {{"marker", "s"}, {"color", "orange"}, {"markersize", "5"}, {"linestyle", "none"}});
+                }
+            }
+            
+            // 设置 path 图表的上下界为车道界限位置
+            // road_borders[0] 是左边界，road_borders[1] 是右边界
+            double y_min = road_borders[1] - 1.0;  // 右边界下方留一点空间
+            double y_max = road_borders[0] + 1.0;  // 左边界上方留一点空间
+            plt::ylim(y_min, y_max);
+            // X 轴范围根据数据自动调整，但可以设置一个合理的范围
+            if (x_history.size() > 0) {
+                double x_min = *std::min_element(x_history.begin(), x_history.end()) - 5.0;
+                double x_max = *std::max_element(x_history.begin(), x_history.end()) + 5.0;
+                // 考虑障碍物的 x 范围
+                for (size_t idx = 1; idx < vehicle_num; ++idx) {
+                    if (index < routing_lines[idx].x.size()) {
+                        double obs_x = routing_lines[idx].x[index];
+                        x_min = std::min(x_min, obs_x - 5.0);
+                        x_max = std::max(x_max, obs_x + 5.0);
+                    }
+                }
+                plt::xlim(x_min, x_max);
+            }
+            plt::xlabel("X (m)", {{"fontsize", "7"}});
+            plt::ylabel("Y (m)", {{"fontsize", "7"}});
+            plt::grid(true);
+
+            // 2. 速度图
+            exec_python("plt.sca(ax_vel)");
+            plt::cla();
+            plt::plot(time_history, velocity_history, {{"color", "purple"}, {"linewidth", "1.5"}});
+            plt::xlabel("Time (s)", {{"fontsize", "7"}});
+            plt::ylabel("v (m/s)", {{"fontsize", "7"}});
+            plt::grid(true);
+
+            // 3. 加速度图
+            exec_python("plt.sca(ax_acc)");
+            plt::cla();
+            plt::plot(time_history, acceleration_history, {{"color", "brown"}, {"linewidth", "1.5"}});
+            plt::xlabel("Time (s)", {{"fontsize", "7"}});
+            plt::ylabel("a (m/s²)", {{"fontsize", "7"}});
+            plt::grid(true);
+
+            // 4. Jerk图
+            exec_python("plt.sca(ax_jerk)");
+            plt::cla();
+            plt::plot(time_history, jerk_history, {{"color", "orange"}, {"linewidth", "1.5"}});
+            plt::xlabel("Time (s)", {{"fontsize", "7"}});
+            plt::ylabel("jerk (m/s³)", {{"fontsize", "7"}});
+            plt::grid(true);
+
+            // 5. 曲率图
+            exec_python("plt.sca(ax_kappa)");
+            plt::cla();
+            plt::plot(time_history, kappa_history, {{"color", "red"}, {"linewidth", "1.5"}});
+            plt::xlabel("Time (s)", {{"fontsize", "7"}});
+            plt::ylabel("κ (1/m)", {{"fontsize", "7"}});
+            plt::grid(true);
+        }
+
         plt::pause(delta_t);
     }
 

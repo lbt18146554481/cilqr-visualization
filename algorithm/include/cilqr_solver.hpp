@@ -1,15 +1,3 @@
-/*
- * @Author: puyu <yuu.pu@foxmail.com>
- * @Date: 2025-01-XX XX:XX:XX
- * @LastEditTime: 2025-01-XX XX:XX:XX
- * @FilePath: /algorithm/include/cilqr_solver.hpp
- * Copyright 2025 puyu, All Rights Reserved.
- * 
- * 5维路径模型版本的CILQR求解器（算法层）
- * 状态空间: [x, y, v, heading, kappa]
- * 控制输入: [acceleration, dkappa]
- */
-
 #pragma once
 #ifndef __CILQR_SOLVER_HPP
 #define __CILQR_SOLVER_HPP

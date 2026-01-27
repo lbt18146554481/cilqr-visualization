@@ -1,13 +1,3 @@
-/*
- * @Author: puyu <yuu.pu@foxmail.com>
- * @Date: 2025-01-XX XX:XX:XX
- * @LastEditTime: 2025-01-XX XX:XX:XX
- * @FilePath: /algorithm/include/types.hpp
- * Copyright 2025 puyu, All Rights Reserved.
- * 
- * 算法模块的基础类型定义
- */
-
 #pragma once
 #ifndef __TYPES_HPP
 #define __TYPES_HPP
