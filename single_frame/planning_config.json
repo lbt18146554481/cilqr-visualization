@@ -1,0 +1,73 @@
+{
+    "reference_path_conf": {
+        "enable_nudge": true
+    },
+    "cilqr_heuristic_trajectory_conf": {
+        "dt": 0.2,
+        "planned_time_length": 6.0,
+        "planned_min_v": 2.0
+    },
+    "cilqr_trajectory_conf": {
+        "dt": 0.2,
+        "horizon": 40,
+        "min_horizon": 5,
+        "min_speed": 2.0,
+        "position_weight": 1,
+        "heading_weight": 1,
+        "kappa_weight": 4,
+        "speed_weight": 1,
+        "acc_weight": 1,
+        "dkappa_weight": 2,
+        "jerk_weight": 0.1,
+        "speed_limit_weight": 100.0,
+        "min_speed_limit": 0.5,
+        "max_speed_limit": 15.0,
+        "acc_limit_weight": 100.0,
+        "min_acc_limit": -4.0,
+        "max_acc_limit": 4.0,
+        "jerk_limit_weight": 100.0,
+        "min_jerk_limit": -4.0,
+        "max_jerk_limit": 4.0,
+        "kappa_limit_weight": 1000.0,
+        "min_kappa_limit": -0.3,
+        "max_kappa_limit": 0.3,
+        "kappa_rate_limit_weight": 1000.0,
+        "min_kappa_rate_limit": -0.2,
+        "max_kappa_rate_limit": 0.2,
+        "latacc_limit_weight": 100.0,
+        "min_latacc_limit": -4.0,
+        "max_latacc_limit": 4.0,
+        "end_position_weight": 1.0,
+        "end_heading_weight": 1.0,
+        "min_speed_for_heading_weight": 2.0,
+        "min_speed_for_kappa_weight": 2.0,
+        "min_speed_for_dkappa_weight": 3.0
+    },
+    "speed_conf": {
+        "max_v": 10.0,
+        "max_acc": 2.0,
+        "min_acc": -6.0,
+        "max_jerk": 2.0,
+        "min_jerk": -4.0,
+        "lat_acc_limit": 0.75
+    },
+    "speed_optimizer_conf": {
+        "basic_buffer": 2.5,
+        "yield_extra_buffer": 1.0,
+        "ref_x_weight": 10.0,
+        "dx_weight": 1.0,
+        "ddx_weight": 1.0,
+        "dddx_weight": 1.0,
+        "x_soft_constraint_weight": 300.0,
+        "dx_soft_constraint_weight": 100.0,
+        "max_iter": 4000.0,
+        "slowdown_dec": -8.0
+    },
+    "init_x": 0,
+    "init_y": 0,
+    "init_theta": 0,
+    "init_kappa": 0,
+    "init_v": 10,
+    "init_a": 0,
+    "ref_mode": "left_turn"
+}
