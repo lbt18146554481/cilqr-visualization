@@ -74,7 +74,6 @@ int main(int argc, char** argv) {
         config->get_config<std::vector<double>>("laneline/center_line");
     std::vector<std::vector<double>> initial_conditions =
         config->get_config<std::vector<std::vector<double>>>("initial_condition");
-    // 路径模型可能没有wheelbase配置，使用length代替
     double wheelbase = config->has_key("vehicle/wheelbase")
                        ? config->get_config<double>("vehicle/wheelbase")
                        : config->get_config<double>("vehicle/length");
@@ -168,8 +167,6 @@ int main(int argc, char** argv) {
         for (double t = 0.0; t < max_simulation_time + 10; t += delta_t) {
             double cur_s = 0.;
             Eigen::Vector3d pos;
-            // The current laneline does not have the attribute of driving direction,
-            // and it is simply deduced by the yaw in the initial condition.
             if (initial_conditions[idx][3] <= M_PI_2) {
                 cur_s = start_s + t * initial_conditions[idx][2];
                 cur_s = std::min(cur_s, center_lines[line_num].longitude.back());
@@ -181,9 +178,6 @@ int main(int argc, char** argv) {
                 pos.z() = fmod(pos.z() + M_PI, 2 * M_PI);
             }
 
-            // randomly add noise to other cars
-            // TODO: the current planning results are very sensitive to noise and
-            //       initial conditions, which need to be optimized.
             if (idx == 0 || Random::uniform(0.0, 1.0) < 0.5) {
                 routing_lines[idx].x.push_back(pos.x());
                 routing_lines[idx].y.push_back(pos.y());
@@ -197,10 +191,8 @@ int main(int argc, char** argv) {
     }
     std::vector<RoutingLine> obs_prediction(routing_lines.begin() + 1, routing_lines.end());
 
-    // 只使用5D路径模型
     SPDLOG_INFO("Using Path Model (5D) CILQR Solver");
 
-    // 初始化适配器（连接算法层和可视化层）
     std::unique_ptr<CILQRAdapter> cilqr_adapter = nullptr;
     try {
         cilqr_adapter = std::make_unique<CILQRAdapter>(config);
@@ -213,11 +205,8 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    // 初始化5D状态（路径模型）
     Vector5d ego_state_5d;
-    // 计算初始kappa（从参考线）
     double initial_s = 0.0;
-    // 找到最近的参考点
     double min_dist = std::numeric_limits<double>::max();
     for (size_t i = 0; i < center_lines[0].size(); ++i) {
         double dist = hypot(center_lines[0].x[i] - initial_conditions[0][0],
@@ -235,7 +224,6 @@ int main(int argc, char** argv) {
                  ego_state_5d[0], ego_state_5d[1], ego_state_5d[2], 
                  ego_state_5d[3], ego_state_5d[4]);
 
-    // 历史数据存储（用于右侧实时图表）
     std::vector<double> time_history;
     std::vector<double> x_history;
     std::vector<double> y_history;
@@ -243,36 +231,31 @@ int main(int argc, char** argv) {
     std::vector<double> acceleration_history;
     std::vector<double> jerk_history;
     std::vector<double> kappa_history;
-    double last_acceleration = 0.0;  // 用于计算jerk
+    double last_acceleration = 0.0;
 
-    // 设置图形大小（更大的窗口以容纳左右两个区域）
-    // figure_size 会自动创建 figure，不需要再调用 figure()
-    plt::figure_size(1600, 800);
+    plt::figure_size(2000, 800);
     
-    // 使用 Python 直接执行 subplot 命令来设置布局（只在初始化时调用一次）
-    // 使用 subplot2grid 创建更灵活的布局：
-    // - 左侧大图：占据前2列的所有行（占据大部分空间）
-    // - 右侧小图：占据第3列，分成5个小图
     exec_python("import matplotlib.pyplot as plt");
     exec_python("fig = plt.gcf()");
-    exec_python("fig.clear()");  // 清除图形
+    exec_python("fig.clear()");
     
-    // 预先创建所有 subplot（只调用一次，避免在循环中重复调用）
-    // 调整布局：左侧动画往左移动一点（减少右侧空间，增加左侧空间）
-    exec_python("ax_main = plt.subplot2grid((5, 3), (0, 0), 5, 2)");
-    exec_python("ax_path = plt.subplot2grid((5, 3), (0, 2), 1, 1)");
-    exec_python("ax_vel = plt.subplot2grid((5, 3), (1, 2), 1, 1)");
-    exec_python("ax_acc = plt.subplot2grid((5, 3), (2, 2), 1, 1)");
-    exec_python("ax_jerk = plt.subplot2grid((5, 3), (3, 2), 1, 1)");
-    exec_python("ax_kappa = plt.subplot2grid((5, 3), (4, 2), 1, 1)");
-    // 调整子图间距，让左侧动画往左移动
-    exec_python("plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05, wspace=0.3, hspace=0.3)");
+    exec_python("ax_main = plt.subplot2grid((5, 4), (0, 0), 5, 2)");
+    exec_python("ax_path = plt.subplot2grid((5, 4), (0, 2), 1, 1)");
+    exec_python("ax_vel = plt.subplot2grid((5, 4), (1, 2), 1, 1)");
+    exec_python("ax_acc = plt.subplot2grid((5, 4), (2, 2), 1, 1)");
+    exec_python("ax_jerk = plt.subplot2grid((5, 4), (3, 2), 1, 1)");
+    exec_python("ax_kappa = plt.subplot2grid((5, 4), (4, 2), 1, 1)");
+    exec_python("ax_path_pred = plt.subplot2grid((5, 4), (0, 3), 1, 1)");
+    exec_python("ax_vel_pred = plt.subplot2grid((5, 4), (1, 3), 1, 1)");
+    exec_python("ax_acc_pred = plt.subplot2grid((5, 4), (2, 3), 1, 1)");
+    exec_python("ax_jerk_pred = plt.subplot2grid((5, 4), (3, 3), 1, 1)");
+    exec_python("ax_kappa_pred = plt.subplot2grid((5, 4), (4, 3), 1, 1)");
+    exec_python("plt.subplots_adjust(left=0.03, right=0.97, top=0.95, bottom=0.05, wspace=0.25, hspace=0.3)");
 
     for (double t = 0.; t < max_simulation_time; t += delta_t) {
         size_t index = t / delta_t;
         
-        // 左侧：原有动画（使用预先创建的 subplot，避免重复调用 Python）
-        exec_python("plt.sca(ax_main)");  // 切换到主图（比 subplot2grid 快）
+        exec_python("plt.sca(ax_main)");
         plt::cla();
         for (size_t i = 0; i < borders.size(); ++i) {
             if (i == 0 || i == borders.size() - 1) {
@@ -289,7 +272,6 @@ int main(int argc, char** argv) {
         MatrixX5d new_x_5d;
         Vector5d ego_state_current_5d;
         
-        // 使用适配器调用5D算法
         auto [u, x] = cilqr_adapter->solve(ego_state_5d, center_lines[0], target_velocity,
                                           utils::get_sub_routing_lines(obs_prediction, index), road_borders);
         new_u = u;
@@ -297,7 +279,6 @@ int main(int argc, char** argv) {
         ego_state_current_5d = new_x_5d.row(1).transpose();
         ego_state_5d = ego_state_current_5d;
         
-        // 转换为4维用于可视化
         Eigen::MatrixX4d new_x_4d = Eigen::MatrixX4d::Zero(new_x_5d.rows(), 4);
         new_x_4d << new_x_5d.block(0, 0, new_x_5d.rows(), 2),
                    new_x_5d.col(2),
@@ -308,11 +289,8 @@ int main(int argc, char** argv) {
 
         Eigen::MatrixX4d boarder = utils::get_boundary(new_x_4d, VEHICLE_WIDTH * 0.7);
         std::vector<std::vector<double>> closed_curve = utils::get_closed_curve(boarder);
-        // plt::fill(closed_curve[0], closed_curve[1], {{"color", "cyan"}, {"alpha", "0.7"}});// 2选1-1画自车轨迹(绿色条)
-        plt::plot(closed_curve[0], closed_curve[1]); // 2选1-2画自车轨迹(线段形式)
+        plt::plot(closed_curve[0], closed_curve[1]);
 
-        // 画自车（使用当前状态）
-        // 对于5维状态，只使用前4维进行可视化
         Eigen::Vector4d ego_viz;
         ego_viz << ego_state_current_5d[0], ego_state_current_5d[1],
                   ego_state_current_5d[2], ego_state_current_5d[3];
@@ -336,7 +314,6 @@ int main(int argc, char** argv) {
             plt::plot(center_lines[0].x, center_lines[0].y, "-r");
         }
 
-        // default figure x-y limit
         double ego_x = ego_state_current_5d[0];
         double ego_y = ego_state_current_5d[1];
         double visual_x_min = ego_x - 10;
@@ -352,7 +329,6 @@ int main(int argc, char** argv) {
             visual_y_max = visual_y_limit[1];
         }
 
-        // 控制量显示（路径模型使用dkappa）
         double control_display = new_u.row(0)[1];
         std::vector<double> outlook_steer_pos = {visual_x_min + steer_size / 1.5,
                                                  visual_y_max - steer_size / 1.5,
@@ -375,7 +351,6 @@ int main(int argc, char** argv) {
         double text_left = bar_left + 4.5;
         double text_top = visual_y_max - 1.5;
         
-        // 状态显示（5D路径模型）
         plt::text(text_left, text_top, fmt::format("x = {:.2f} m", ego_state_current_5d[0]),
                   {{"color", "black"}});
         plt::text(text_left, text_top - 1.5, fmt::format("y = {:.2f} m", ego_state_current_5d[1]),
@@ -393,9 +368,7 @@ int main(int argc, char** argv) {
 
         plt::xlim(visual_x_min, visual_x_max);
         plt::ylim(visual_y_min, visual_y_max);
-        // 移除标题
 
-        // 收集历史数据
         time_history.push_back(t);
         x_history.push_back(ego_state_current_5d[0]);
         y_history.push_back(ego_state_current_5d[1]);
@@ -403,7 +376,6 @@ int main(int argc, char** argv) {
         double current_acceleration = new_u.row(0)[0];
         acceleration_history.push_back(current_acceleration);
         
-        // 计算jerk（加速度的变化率）
         double current_jerk = 0.0;
         if (time_history.size() > 1) {
             current_jerk = (current_acceleration - last_acceleration) / delta_t;
@@ -413,43 +385,31 @@ int main(int argc, char** argv) {
         
         kappa_history.push_back(ego_state_current_5d[4]);
 
-        // 右侧：实时图表（使用预先创建的 subplot，避免重复调用 Python）
         if (time_history.size() > 1) {
-            // 1. 路径图（x-y轨迹）
-            exec_python("plt.sca(ax_path)");  // 切换到路径图（比 subplot2grid 快）
+            exec_python("plt.sca(ax_path)");
             plt::cla();
-            
-            // 绘制自车轨迹（蓝色）
             plt::plot(x_history, y_history, {{"color", "blue"}, {"linewidth", "1.5"}});
             std::vector<double> current_x = {x_history.back()};
             std::vector<double> current_y = {y_history.back()};
             plt::plot(current_x, current_y, {{"marker", "o"}, {"color", "red"}, {"markersize", "6"}, {"linestyle", "none"}});
             
-            // 绘制障碍物轨迹和当前位置
             for (size_t idx = 1; idx < vehicle_num; ++idx) {
                 if (index < routing_lines[idx].x.size() && index < routing_lines[idx].y.size()) {
-                    // 绘制障碍物的历史轨迹（从开始到当前时间）
                     std::vector<double> obs_x_history(routing_lines[idx].x.begin(), routing_lines[idx].x.begin() + index + 1);
                     std::vector<double> obs_y_history(routing_lines[idx].y.begin(), routing_lines[idx].y.begin() + index + 1);
                     plt::plot(obs_x_history, obs_y_history, {{"color", "gray"}, {"linewidth", "1.0"}, {"linestyle", "--"}});
-                    
-                    // 绘制障碍物当前位置（用三角形标记）
                     std::vector<double> obs_current_x = {routing_lines[idx].x[index]};
                     std::vector<double> obs_current_y = {routing_lines[idx].y[index]};
                     plt::plot(obs_current_x, obs_current_y, {{"marker", "s"}, {"color", "orange"}, {"markersize", "5"}, {"linestyle", "none"}});
                 }
             }
             
-            // 设置 path 图表的上下界为车道界限位置
-            // road_borders[0] 是左边界，road_borders[1] 是右边界
-            double y_min = road_borders[1] - 1.0;  // 右边界下方留一点空间
-            double y_max = road_borders[0] + 1.0;  // 左边界上方留一点空间
+            double y_min = road_borders[1] - 1.0;
+            double y_max = road_borders[0] + 1.0;
             plt::ylim(y_min, y_max);
-            // X 轴范围根据数据自动调整，但可以设置一个合理的范围
             if (x_history.size() > 0) {
                 double x_min = *std::min_element(x_history.begin(), x_history.end()) - 5.0;
                 double x_max = *std::max_element(x_history.begin(), x_history.end()) + 5.0;
-                // 考虑障碍物的 x 范围
                 for (size_t idx = 1; idx < vehicle_num; ++idx) {
                     if (index < routing_lines[idx].x.size()) {
                         double obs_x = routing_lines[idx].x[index];
@@ -463,7 +423,6 @@ int main(int argc, char** argv) {
             plt::ylabel("Y (m)", {{"fontsize", "7"}});
             plt::grid(true);
 
-            // 2. 速度图
             exec_python("plt.sca(ax_vel)");
             plt::cla();
             plt::plot(time_history, velocity_history, {{"color", "purple"}, {"linewidth", "1.5"}});
@@ -471,7 +430,6 @@ int main(int argc, char** argv) {
             plt::ylabel("v (m/s)", {{"fontsize", "7"}});
             plt::grid(true);
 
-            // 3. 加速度图
             exec_python("plt.sca(ax_acc)");
             plt::cla();
             plt::plot(time_history, acceleration_history, {{"color", "brown"}, {"linewidth", "1.5"}});
@@ -479,7 +437,6 @@ int main(int argc, char** argv) {
             plt::ylabel("a (m/s²)", {{"fontsize", "7"}});
             plt::grid(true);
 
-            // 4. Jerk图
             exec_python("plt.sca(ax_jerk)");
             plt::cla();
             plt::plot(time_history, jerk_history, {{"color", "orange"}, {"linewidth", "1.5"}});
@@ -487,13 +444,100 @@ int main(int argc, char** argv) {
             plt::ylabel("jerk (m/s³)", {{"fontsize", "7"}});
             plt::grid(true);
 
-            // 5. 曲率图
             exec_python("plt.sca(ax_kappa)");
             plt::cla();
             plt::plot(time_history, kappa_history, {{"color", "red"}, {"linewidth", "1.5"}});
             plt::xlabel("Time (s)", {{"fontsize", "7"}});
             plt::ylabel("κ (1/m)", {{"fontsize", "7"}});
             plt::grid(true);
+        }
+
+        if (new_x_5d.rows() > 1 && new_u.rows() > 0) {
+            std::vector<double> pred_time;
+            std::vector<double> pred_x;
+            std::vector<double> pred_y;
+            std::vector<double> pred_velocity;
+            std::vector<double> pred_acceleration;
+            std::vector<double> pred_jerk;
+            std::vector<double> pred_kappa;
+
+            for (int i = 1; i < new_x_5d.rows(); ++i) {
+                pred_time.push_back(t + (i - 1) * delta_t);
+                pred_x.push_back(new_x_5d(i, 0));
+                pred_y.push_back(new_x_5d(i, 1));
+                pred_velocity.push_back(new_x_5d(i, 2));
+                pred_kappa.push_back(new_x_5d(i, 4));
+                
+                if (i - 1 < new_u.rows()) {
+                    pred_acceleration.push_back(new_u(i - 1, 0));
+                }
+            }
+
+            if (pred_acceleration.size() > 1) {
+                pred_jerk.push_back(0.0);
+                for (size_t i = 1; i < pred_acceleration.size(); ++i) {
+                    double jerk = (pred_acceleration[i] - pred_acceleration[i-1]) / delta_t;
+                    pred_jerk.push_back(jerk);
+                }
+            } else if (pred_acceleration.size() == 1) {
+                pred_jerk.push_back(0.0);
+            }
+
+            if (pred_time.size() > 0) {
+                exec_python("plt.sca(ax_path_pred)");
+                plt::cla();
+                plt::plot(pred_x, pred_y, {{"color", "green"}, {"linewidth", "1.5"}, {"linestyle", "--"}});
+                std::vector<double> start_x = {ego_state_current_5d[0]};
+                std::vector<double> start_y = {ego_state_current_5d[1]};
+                plt::plot(start_x, start_y, {{"marker", "o"}, {"color", "red"}, {"markersize", "6"}, {"linestyle", "none"}});
+                double y_min = road_borders[1] - 1.0;
+                double y_max = road_borders[0] + 1.0;
+                plt::ylim(y_min, y_max);
+                if (pred_x.size() > 0) {
+                    double x_min = *std::min_element(pred_x.begin(), pred_x.end()) - 5.0;
+                    double x_max = *std::max_element(pred_x.begin(), pred_x.end()) + 5.0;
+                    x_min = std::min(x_min, ego_state_current_5d[0] - 5.0);
+                    x_max = std::max(x_max, ego_state_current_5d[0] + 5.0);
+                    plt::xlim(x_min, x_max);
+                }
+                plt::xlabel("X (m)", {{"fontsize", "7"}});
+                plt::ylabel("Y (m)", {{"fontsize", "7"}});
+                plt::grid(true);
+
+                exec_python("plt.sca(ax_vel_pred)");
+                plt::cla();
+                plt::plot(pred_time, pred_velocity, {{"color", "green"}, {"linewidth", "1.5"}, {"linestyle", "--"}});
+                plt::xlabel("Time (s)", {{"fontsize", "7"}});
+                plt::ylabel("v (m/s)", {{"fontsize", "7"}});
+                plt::grid(true);
+
+                exec_python("plt.sca(ax_acc_pred)");
+                plt::cla();
+                if (pred_time.size() == pred_acceleration.size()) {
+                    plt::plot(pred_time, pred_acceleration, {{"color", "green"}, {"linewidth", "1.5"}, {"linestyle", "--"}});
+                }
+                plt::xlabel("Time (s)", {{"fontsize", "7"}});
+                plt::ylabel("a (m/s²)", {{"fontsize", "7"}});
+                plt::grid(true);
+
+                exec_python("plt.sca(ax_jerk_pred)");
+                plt::cla();
+                if (pred_time.size() == pred_jerk.size() && pred_jerk.size() > 0) {
+                    plt::plot(pred_time, pred_jerk, {{"color", "green"}, {"linewidth", "1.5"}, {"linestyle", "--"}});
+                }
+                plt::xlabel("Time (s)", {{"fontsize", "7"}});
+                plt::ylabel("jerk (m/s³)", {{"fontsize", "7"}});
+                plt::grid(true);
+
+                exec_python("plt.sca(ax_kappa_pred)");
+                plt::cla();
+                if (pred_time.size() == pred_kappa.size()) {
+                    plt::plot(pred_time, pred_kappa, {{"color", "green"}, {"linewidth", "1.5"}, {"linestyle", "--"}});
+                }
+                plt::xlabel("Time (s)", {{"fontsize", "7"}});
+                plt::ylabel("κ (1/m)", {{"fontsize", "7"}});
+                plt::grid(true);
+            }
         }
 
         plt::pause(delta_t);
