@@ -2,13 +2,13 @@
  * @Author: puyu <yuu.pu@foxmail.com>
  * @Date: 2025-01-XX XX:XX:XX
  * @LastEditTime: 2025-01-XX XX:XX:XX
- * @FilePath: /algorithm/src/path_model_utils.cpp
+ * @FilePath: /animation/src/common/path_model_utils.cpp
  * Copyright 2025 puyu, All Rights Reserved.
  * 
  * 路径模型工具函数实现
  */
 
-#include "path_model_utils.hpp"
+#include "common/path_model_utils.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -16,9 +16,13 @@ namespace cilqr {
 
 namespace path_model {
 
+// 路径模型传播函数（5维状态空间）
+// 根据当前状态和控制输入，计算下一时刻的状态
+// 状态: [x, y, v, heading, kappa] - 位置x、位置y、速度、航向角、曲率
+// 控制: [acceleration, dkappa] - 加速度、曲率变化率
+// dt: 时间步长
+// 返回: 下一时刻的5维状态向量
 Vector5d propagate(const Vector5d& cur_x, const Eigen::Vector2d& cur_u, double dt) {
-    // 状态: [x, y, v, heading, kappa]
-    // 控制: [acceleration, dkappa]
     double v = cur_x[2];
     double heading = cur_x[3];
     double kappa = cur_x[4];
@@ -35,10 +39,17 @@ Vector5d propagate(const Vector5d& cur_x, const Eigen::Vector2d& cur_u, double d
     return next_x;
 }
 
+// 路径模型线性化（计算A和B矩阵）
+// 计算路径模型的状态转移矩阵A和控制矩阵B，用于LQR优化
+// A矩阵：∂f/∂x (5x5) - 状态对状态的偏导数
+// B矩阵：∂f/∂u (5x2) - 状态对控制的偏导数
+// x: 状态序列矩阵 (steps x 5)
+// u: 控制序列矩阵 (steps x 2)
+// dt: 时间步长
+// steps: 时间步数
+// 返回: (A矩阵, B矩阵) 的元组
 std::tuple<MatrixX5d, Eigen::MatrixX2d> get_derivatives(
     const MatrixX5d& x, const Eigen::MatrixX2d& u, double dt, uint32_t steps) {
-    // A矩阵：∂f/∂x (5x5)
-    // B矩阵：∂f/∂u (5x2)
     MatrixX5d df_dx(steps * 5, 5);
     Eigen::MatrixX2d df_du(steps * 5, 2);
 
@@ -77,11 +88,12 @@ std::tuple<MatrixX5d, Eigen::MatrixX2d> get_derivatives(
     return std::make_tuple(df_dx, df_du);
 }
 
+// 从参考线计算曲率
+// 根据参考线上给定弧长s的位置，计算该点的曲率值
+// ref_line: 参考线对象，包含x、y坐标序列和longitude（弧长）序列
+// s: 弧长位置
+// 返回: 该位置的曲率值（1/m），使用数值微分方法计算
 double calc_kappa_from_reference(const ReferenceLine& ref_line, double s) {
-    // 简化实现：使用数值微分计算曲率
-    // 注意：算法层的ReferenceLine需要提供spline接口
-    // 这里先使用简化版本，实际应该调用spline的calc_curvature方法
-    
     if (s < 0) s = 0;
     if (s > ref_line.length()) s = ref_line.length();
     

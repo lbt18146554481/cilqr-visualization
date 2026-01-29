@@ -11,11 +11,11 @@
 #include <memory>
 
 // 包含 algorithm 目录下的算法头文件
-// 使用优化器基类系统（统一架构）
-#include "../algorithm/include/trajectory_optimizer.hpp"
-#include "../algorithm/include/optimizer_factory.hpp"
-#include "../algorithm/include/algorithm_config.hpp"
-#include "../algorithm/include/types.hpp"
+// 使用 Decider 层（对齐 trajectory_smoother 架构）
+// 注意：算法实现已移动到 trajectory_smoother
+// #include "../trajectory_smoother/cilqr_lane_change/cilqr_iter_decider.h"
+#include "../animation/include/common/algorithm_config.hpp"
+#include "../animation/include/common/types.hpp"
 
 // 包含neolix类型定义（使用mock headers）
 #include "mock_headers/src/common/trajectory/trajectory_point.h"
@@ -46,8 +46,8 @@ namespace {
 class CilqrTrajectoryOptimizer::Impl {
 private:
     cilqr::AlgorithmConfig config_;
-    // 使用优化器基类系统（统一架构）
-    std::unique_ptr<trajectory_optimizer::TrajectoryOptimizer> optimizer_;
+    // 使用 Decider（对齐 trajectory_smoother 架构）
+    std::unique_ptr<ceshi::planning::PathConstrainedIterLqrDeciderAML> cilqr_decider_;
     std::vector<PathModelState> optimized_states_;
     std::vector<PathModelControl> optimized_controls_;
 
@@ -154,17 +154,15 @@ public:
         config_.dkappa_min = -0.1;
         config_.d_safe = 0.8;
         
-        // 使用优化器基类系统创建优化器（统一架构）
-        optimizer_ = trajectory_optimizer::OptimizerFactory::Create(
-            "cilqr", "single frame cilqr optimizer", config_);
-        if (!optimizer_) {
-            std::cerr << "Failed to create CILQR optimizer" << std::endl;
-        }
+       
+        cilqr_decider_ = std::make_unique<ceshi::planning::PathConstrainedIterLqrDeciderAML>(
+            "single frame cilqr optimizer", config_);
+
     }
     
     bool Init() {
-        // 优化器在构造函数中已经创建，这里只需要检查
-        return optimizer_ != nullptr;
+     
+        return cilqr_decider_ != nullptr;
     }
     
     bool Optimize(const neolix::planning::TrajectoryPoint& init_point,
@@ -231,22 +229,19 @@ public:
             // 5. 障碍物预测轨迹（single_frame 没有，传入空）
             std::vector<cilqr::RoutingLine> obs_preds;  // 空列表
             
-            // 6. 使用优化器基类系统调用算法（统一架构）
-            if (!optimizer_) {
-                std::cerr << "Optimizer not initialized" << std::endl;
+            // 6. 直接调用 Decider 的 Execute（对齐 trajectory_smoother.cpp 第48行）
+            if (!cilqr_decider_) {
+                std::cerr << "CILQR Decider not initialized" << std::endl;
                 return false;
             }
             
-            auto result = optimizer_->Execute(
+            auto [u, x] = cilqr_decider_->Execute(
                 x0, ref_line, ref_velo, obs_preds, road_borders);
             
-            if (!result.success) {
-                std::cerr << "Optimization failed: " << result.status_message << std::endl;
+            if (x.rows() == 0 || u.rows() == 0) {
+                std::cerr << "Optimization failed: empty result" << std::endl;
                 return false;
             }
-            
-            const auto& x = result.state_sequence;
-            const auto& u = result.control_sequence;
             
             // 输出轨迹信息用于调试
             std::cout << "DEBUG: Optimized trajectory: " << x.rows() << " points, " 

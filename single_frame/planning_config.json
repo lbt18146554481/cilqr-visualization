@@ -69,5 +69,5 @@
     "init_kappa": 0,
     "init_v": 10,
     "init_a": 0,
-    "ref_mode": "left_turn"
+    "ref_mode": "u_turn"
 }

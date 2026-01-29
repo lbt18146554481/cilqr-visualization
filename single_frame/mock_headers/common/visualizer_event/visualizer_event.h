@@ -6,6 +6,9 @@
 
 #include <string>
 
+// FLAGS for visualization
+extern bool FLAGS_planning_enable_vis_event;
+
 namespace ceshi {
 namespace planning {
 namespace visualizer {
@@ -66,3 +69,6 @@ public:
 } // namespace visualizer
 } // namespace planning
 } // namespace ceshi
+
+// Alias for vis namespace (used in trajectory_smoother)
+namespace vis = ceshi::planning::visualizer;

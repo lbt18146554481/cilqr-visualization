@@ -147,16 +147,25 @@ include_directories(${FMT_INCLUDE_DIRS})
 include_directories(${SPDLOG_INCLUDE_DIRS})
 include_directories(${YAML_CPP_INCLUDE_DIRS})
 
-# 添加算法子目录
-add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../algorithm algorithm)
+# 注意：不再编译 algorithm 子目录，因为算法实现已移动到 trajectory_smoother
+# add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../algorithm algorithm)
+
+# 添加trajectory_smoother源文件（现在在项目内部）
+set(TRAJECTORY_SMOOTHER_SOURCES
+    "${CMAKE_CURRENT_LIST_DIR}/../trajectory_smoother/cilqr_iter_decider.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../trajectory_smoother/cilqr_solver.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../trajectory_smoother/cilqr_model.cpp"
+)
 
 # 收集源文件（排除4D模型相关文件）
 file(GLOB SOURCE_FILES 
     "${PROJECT_SOURCE_DIR}/src/motion_planning.cpp"
-    "${PROJECT_SOURCE_DIR}/src/cilqr_adapter.cpp"
     "${PROJECT_SOURCE_DIR}/src/cubic_spline.cpp"
     "${PROJECT_SOURCE_DIR}/src/global_config.cpp"
     "${PROJECT_SOURCE_DIR}/src/utils.cpp"
+    "${PROJECT_SOURCE_DIR}/src/flags.cpp"
+    "${PROJECT_SOURCE_DIR}/src/common/path_model_utils.cpp"
+    ${TRAJECTORY_SMOOTHER_SOURCES}
 )
 
 # 设置第三方库列表
@@ -165,7 +174,7 @@ set(3RDPARTY_LIBS
     ${FMT_LIBRARIES} 
     ${SPDLOG_LIBRARIES} 
     ${YAML_CPP_LIBRARIES}
-    cilqr_algorithm  # 算法库
+    # 不再链接 cilqr_algorithm，因为算法实现已移动到 trajectory_smoother
 )
 
 # 添加可执行文件并链接库
@@ -175,7 +184,9 @@ target_link_libraries(motion_planning ${3RDPARTY_LIBS})
 
 # 添加算法库的头文件路径
 target_include_directories(motion_planning PRIVATE 
-    ${CMAKE_CURRENT_LIST_DIR}/../algorithm/include
+    ${CMAKE_CURRENT_LIST_DIR}/include  # 包含 common/ 目录（类型定义和配置）
+    ${CMAKE_CURRENT_LIST_DIR}/../trajectory_smoother  # trajectory_smoother 头文件
+    ${CMAKE_CURRENT_LIST_DIR}/../single_frame/mock_headers
 )
 
 # 安装目标

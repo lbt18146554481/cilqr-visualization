@@ -13,6 +13,8 @@
 #define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_DEBUG
 
 #include "cubic_spline.hpp"
+#include "common/types.hpp"  // 包含算法层的类型定义（cilqr命名空间）
+#include "common/algorithm_config.hpp"  // 包含AlgorithmConfig定义
 
 #include <Eigen/Core>
 #include <algorithm>
@@ -26,6 +28,9 @@
 #include <vector>
 
 constexpr double EPS = 1e-5;
+
+// 前向声明（避免循环依赖）
+class GlobalConfig;
 
 // 5维状态空间类型别名（用于路径模型）
 using Vector5d = Eigen::Matrix<double, 5, 1>;
@@ -295,6 +300,19 @@ Vector5d path_model_propagate(const Vector5d& cur_x,  // [x, y, v, heading, kapp
 std::tuple<MatrixX5d, Eigen::MatrixX2d> get_path_model_derivatives(
     const MatrixX5d& x, const Eigen::MatrixX2d& u, double dt, uint32_t steps);
 double calc_kappa_from_reference(const ReferenceLine& ref_line, double s);
+
+// 数据转换函数（可视化层 <-> 算法层）
+// 转换 ReferenceLine（可视化层 -> 算法层）
+cilqr::ReferenceLine convert_to_algo_ref(const ReferenceLine& vis_ref);
+
+// 转换 RoutingLine（可视化层 -> 算法层）
+std::vector<cilqr::RoutingLine> convert_to_algo_routing(
+    const std::vector<RoutingLine>& vis_routing);
+
+// 创建算法配置（从 GlobalConfig 转换）
+// 注意：GlobalConfig 和 AlgorithmConfig 需要在实现文件中包含完整定义
+// 使用前向声明，避免循环依赖
+cilqr::AlgorithmConfig create_algo_config(const GlobalConfig* const config);
 }  // namespace utils
 
 #endif

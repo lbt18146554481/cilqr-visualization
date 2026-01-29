@@ -13,13 +13,9 @@
 
 CILQRAdapter::CILQRAdapter(const GlobalConfig* const config) {
     algo_config_ = create_algorithm_config(config);
-    // 使用工厂创建优化器（参考 trajectory_smoother.cpp 的设计风格）
-    optimizer_ = trajectory_optimizer::OptimizerFactory::Create(
-        "cilqr", "trajectory smoother cilqr", algo_config_);
-    if (!optimizer_) {
-        SPDLOG_ERROR("Failed to create CILQR optimizer");
-        throw std::runtime_error("Failed to create CILQR optimizer");
-    }
+    // 直接实例化 Decider（对齐 trajectory_smoother.cpp 第47行）
+    cilqr_decider_ = std::make_unique<ceshi::planning::PathConstrainedIterLqrDeciderAML>(
+        "trajectory smoother cilqr", algo_config_);
 }
 
 cilqr::AlgorithmConfig CILQRAdapter::create_algorithm_config(const GlobalConfig* const config) {
@@ -125,14 +121,6 @@ std::tuple<Eigen::MatrixX2d, MatrixX5d> CILQRAdapter::solve(
     cilqr::ReferenceLine algo_ref = convert_reference_line(ref_waypoints);
     std::vector<cilqr::RoutingLine> algo_obs = convert_routing_lines(obs_preds);
     
-    // 使用优化器基类接口执行优化（参考 trajectory_smoother.cpp 的设计风格）
-    auto result = optimizer_->Execute(x0, algo_ref, ref_velo, algo_obs, road_boaders);
-    
-    if (!result.success) {
-        SPDLOG_WARN("Optimization failed: {}", result.status_message);
-        // 返回空结果
-        return {Eigen::MatrixX2d(), MatrixX5d()};
-    }
-    
-    return {result.control_sequence, result.state_sequence};
+    // 直接调用 Decider 的 Execute（对齐 trajectory_smoother.cpp 第48行）
+    return cilqr_decider_->Execute(x0, algo_ref, ref_velo, algo_obs, road_boaders);
 }

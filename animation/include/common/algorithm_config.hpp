@@ -1,13 +1,3 @@
-/*
- * @Author: puyu <yuu.pu@foxmail.com>
- * @Date: 2025-01-XX XX:XX:XX
- * @LastEditTime: 2025-01-XX XX:XX:XX
- * @FilePath: /algorithm/include/algorithm_config.hpp
- * Copyright 2025 puyu, All Rights Reserved.
- * 
- * 算法配置接口（与可视化层解耦）
- */
-
 #pragma once
 #ifndef __ALGORITHM_CONFIG_HPP
 #define __ALGORITHM_CONFIG_HPP
@@ -67,6 +57,6 @@ struct AlgorithmConfig {
     double d_safe = 0.8;
 };
 
-}  // namespace cilqr
+}  
 
 #endif

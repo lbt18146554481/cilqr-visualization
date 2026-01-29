@@ -6,10 +6,18 @@
  * Copyright 2024 puyu, All Rights Reserved.
  */
 
-#include "cilqr_adapter.hpp"
 #include "cubic_spline.hpp"
 #include "global_config.hpp"
 #include "matplotlibcpp.h"
+#include "utils.hpp"
+#include "common/algorithm_config.hpp"
+#include "common/types.hpp"
+#include "../../trajectory_smoother/cilqr_iter_decider.h"
+#include "../../single_frame/mock_headers/src/planning/common/path/path_point.h"
+#include "../../single_frame/mock_headers/src/planning/common/data_center/inside_planner_data.h"
+#include "../../single_frame/mock_headers/src/planning/task/optimizers/third_order_spline_path_optimizer/third_order_spline_path_model.h"
+#include "../../single_frame/mock_headers/src/planning/common/vehicle_param.h"
+#include "../../single_frame/mock_headers/src/planning/common/log.h"
 
 #include <fmt/core.h>
 #include <getopt.h>
@@ -191,19 +199,13 @@ int main(int argc, char** argv) {
     }
     std::vector<RoutingLine> obs_prediction(routing_lines.begin() + 1, routing_lines.end());
 
-    SPDLOG_INFO("Using Path Model (5D) CILQR Solver");
+    SPDLOG_INFO("Using Path Model (5D) CILQR Solver with trajectory_smoother");
 
-    std::unique_ptr<CILQRAdapter> cilqr_adapter = nullptr;
-    try {
-        cilqr_adapter = std::make_unique<CILQRAdapter>(config);
-        SPDLOG_INFO("CILQRAdapter created successfully");
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("Failed to create CILQRAdapter: {}", e.what());
-        return -1;
-    } catch (...) {
-        SPDLOG_ERROR("Failed to create CILQRAdapter: unknown exception");
-        return -1;
-    }
+    cilqr::AlgorithmConfig algo_config = utils::create_algo_config(config);
+    
+    // 保留原有的cilqr对象用于备用（如果需要）
+    // ceshi::planning::PathConstrainedIterLqrDeciderAML cilqr("motion planning cilqr", algo_config);
+    // SPDLOG_INFO("PathConstrainedIterLqrDeciderAML created successfully");
 
     Vector5d ego_state_5d;
     double initial_s = 0.0;
@@ -272,12 +274,258 @@ int main(int argc, char** argv) {
         MatrixX5d new_x_5d;
         Vector5d ego_state_current_5d;
         
-        auto [u, x] = cilqr_adapter->solve(ego_state_5d, center_lines[0], target_velocity,
-                                          utils::get_sub_routing_lines(obs_prediction, index), road_borders);
-        new_u = u;
-        new_x_5d = x;
-        ego_state_current_5d = new_x_5d.row(1).transpose();
-        ego_state_5d = ego_state_current_5d;
+       
+        cilqr::ReferenceLine algo_ref = utils::convert_to_algo_ref(center_lines[0]);
+        std::vector<cilqr::RoutingLine> algo_obs = utils::convert_to_algo_routing(
+            utils::get_sub_routing_lines(obs_prediction, index));
+        
+        
+        // 1. 创建 InsidePlannerData
+        ceshi::planning::InsidePlannerData inside_data;
+        inside_data.vel_x = ego_state_5d[0];
+        inside_data.vel_y = ego_state_5d[1];
+        inside_data.vel_v = ego_state_5d[2];
+        inside_data.vel_heading = ego_state_5d[3];
+        inside_data.vel_steer_angle = 0.0;
+        inside_data.init_sl_point.set_s(0.0);
+        inside_data.init_sl_point.set_l(0.0);
+        
+        // 2. 创建 raw_trajectory_points（从参考线生成初始轨迹）
+        // 首先找到参考线上最接近当前车辆位置的点
+        size_t start_idx = 0;
+        double min_dist_to_ego = std::numeric_limits<double>::max();
+        for (size_t i = 0; i < algo_ref.size(); ++i) {
+            double dist = std::hypot(algo_ref.x[i] - ego_state_5d[0], algo_ref.y[i] - ego_state_5d[1]);
+            if (dist < min_dist_to_ego) {
+                min_dist_to_ego = dist;
+                start_idx = i;
+            }
+        }
+        
+        SPDLOG_INFO("Found closest point on reference line: start_idx={}, min_dist={:.3f}", start_idx, min_dist_to_ego);
+        
+        std::vector<ceshi::planning::TrajectoryPoint> raw_trajectory_points;
+        // 从当前位置开始生成轨迹，但至少保留一定数量的点
+        size_t num_points = std::min(static_cast<size_t>(50), algo_ref.size() - start_idx);
+        raw_trajectory_points.reserve(num_points);
+        
+        // 第一个点使用当前车辆状态
+        ceshi::planning::TrajectoryPoint first_point;
+        first_point.set_x(ego_state_5d[0]);
+        first_point.set_y(ego_state_5d[1]);
+        first_point.set_theta(ego_state_5d[3]);
+        first_point.set_kappa(ego_state_5d[4]);
+        first_point.set_velocity(ego_state_5d[2]);
+        first_point.set_relative_time(0.0);
+        first_point.set_acceleration(0.0);
+        raw_trajectory_points.push_back(first_point);
+        
+        size_t ref_start_idx = (min_dist_to_ego < 0.1 && start_idx + 1 < algo_ref.size()) ? start_idx + 1 : start_idx;
+        for (size_t i = ref_start_idx; i < algo_ref.size() && raw_trajectory_points.size() < num_points; ++i) {
+            ceshi::planning::TrajectoryPoint point;
+            point.set_x(algo_ref.x[i]);
+            point.set_y(algo_ref.y[i]);
+            point.set_theta(algo_ref.yaw[i]);
+            
+            // 计算曲率
+            double kappa = 0.0;
+            if (i > 0 && i < algo_ref.size() - 1) {
+                double dx1 = algo_ref.x[i] - algo_ref.x[i-1];
+                double dy1 = algo_ref.y[i] - algo_ref.y[i-1];
+                double dx2 = algo_ref.x[i+1] - algo_ref.x[i];
+                double dy2 = algo_ref.y[i+1] - algo_ref.y[i];
+                double dist1 = std::hypot(dx1, dy1);
+                double dist2 = std::hypot(dx2, dy2);
+                if (dist1 > 1e-6 && dist2 > 1e-6) {
+                    double heading1 = std::atan2(dy1, dx1);
+                    double heading2 = std::atan2(dy2, dx2);
+                    double dheading = heading2 - heading1;
+                    while (dheading > M_PI) dheading -= 2 * M_PI;
+                    while (dheading < -M_PI) dheading += 2 * M_PI;
+                    double avg_dist = (dist1 + dist2) / 2.0;
+                    if (avg_dist > 1e-6) {
+                        kappa = dheading / avg_dist;
+                    }
+                }
+            }
+            point.set_kappa(kappa);
+            point.set_velocity(target_velocity);
+            
+            // 计算相对时间（从第一个点开始累积）
+            double dt = 0.1; // 默认时间步长
+            if (i > ref_start_idx && algo_ref.longitude.size() > i && i > 0) {
+                // 使用参考线的纵向距离计算时间
+                double ds = algo_ref.longitude[i] - algo_ref.longitude[i-1];
+                if (target_velocity > 1e-6 && ds > 1e-6) {
+                    dt = ds / target_velocity;
+                }
+            } else if (i == ref_start_idx && raw_trajectory_points.size() > 0) {
+                // 第一个参考点的时间基于从车辆位置到该点的距离
+                double ds = std::hypot(algo_ref.x[i] - ego_state_5d[0], algo_ref.y[i] - ego_state_5d[1]);
+                if (target_velocity > 1e-6 && ds > 1e-6) {
+                    dt = ds / target_velocity;
+                }
+            }
+            double relative_time = raw_trajectory_points.back().relative_time() + dt;
+            point.set_relative_time(relative_time);
+            point.set_acceleration(0.0);
+            
+            raw_trajectory_points.push_back(point);
+        }
+        
+        SPDLOG_INFO("Generated {} raw_trajectory_points, first point: [{:.3f}, {:.3f}], second point: [{:.3f}, {:.3f}]", 
+                    raw_trajectory_points.size(),
+                    raw_trajectory_points[0].x(), raw_trajectory_points[0].y(),
+                    raw_trajectory_points.size() > 1 ? raw_trajectory_points[1].x() : 0.0,
+                    raw_trajectory_points.size() > 1 ? raw_trajectory_points[1].y() : 0.0);
+        
+        std::vector<ceshi::planning::ReferencePoint> ref_points;
+        ref_points.reserve(algo_ref.size());
+        
+        for (size_t i = 0; i < algo_ref.size(); ++i) {
+            ceshi::planning::ReferencePoint ref_pt(
+                algo_ref.x[i], algo_ref.y[i], algo_ref.yaw[i],
+                0.0, 0.0, 0.0, algo_ref.longitude[i]
+            );
+            ref_pt.set_left_bound(road_borders[0]);
+            ref_pt.set_right_bound(road_borders[1]);
+            ref_points.push_back(ref_pt);
+        }
+        ceshi::planning::ReferenceLine reference_line(ref_points);
+        
+        ceshi::planning::ThirdOrderSplinePath::State init_state;
+        init_state.state_l0 = 0.0;
+        init_state.state_dl = 0.0;
+        init_state.state_ddl = 0.0;
+        
+        std::vector<double> knots_delta_s;
+        std::vector<ceshi::planning::PieceBoundary> piece_boundaries;
+        std::vector<ceshi::planning::PieceBoundary> orin_boundaries;
+        
+        if (algo_ref.longitude.size() > 1) {
+            knots_delta_s.reserve(algo_ref.longitude.size() - 1);
+            for (size_t i = 1; i < algo_ref.longitude.size(); ++i) {
+                knots_delta_s.push_back(algo_ref.longitude[i] - algo_ref.longitude[i-1]);
+            }
+        }
+        
+        std::vector<ceshi::planning::TrajectoryPoint> computed_trajectory_points;
+        
+        if (inside_data.vel_v >= 0.5) {
+            SPDLOG_INFO("raw_trajectory_points size:{}", raw_trajectory_points.size());
+            
+            ceshi::planning::PathConstrainedIterLqrDeciderAML cilqr("trajectory smoother cilqr");
+            ceshi::planning::ErrorCode error_code = cilqr.Execute(init_state, inside_data, raw_trajectory_points, 
+                                                 knots_delta_s, piece_boundaries, orin_boundaries, 
+                                                 reference_line);
+            
+            if (error_code == ceshi::planning::ErrorCode::PLANNING_OK) {
+                std::vector<ceshi::planning::TrajectoryPoint> rough_trajectory = raw_trajectory_points;
+                bool success = cilqr.get_xystate_seqs(rough_trajectory);
+                if (success) {
+                    computed_trajectory_points = rough_trajectory;
+                    SPDLOG_INFO("zzz_lqr:输出结果是lqr优化的结果");
+                } else {
+                    SPDLOG_WARN("get_xystate_seqs failed, using raw trajectory");
+                    computed_trajectory_points = raw_trajectory_points;
+                }
+            } else {
+                SPDLOG_WARN("CILQR Execute failed, using raw trajectory");
+                computed_trajectory_points = raw_trajectory_points;
+            }
+        } else {
+            computed_trajectory_points = raw_trajectory_points;
+            SPDLOG_INFO("zzz_lqr:输出结果是直接使用粗解 (vel_v={:.3f} < 0.5)", inside_data.vel_v);
+        }
+        
+        // 6. 计算 s 值（累积距离）
+        std::vector<ceshi::planning::TrajectoryPoint> final_trajectory_points;
+        if (!computed_trajectory_points.empty()) {
+            final_trajectory_points.reserve(computed_trajectory_points.size());
+            double accumulated_s = 0.0;
+            
+            ceshi::planning::TrajectoryPoint first_point = computed_trajectory_points[0];
+            first_point.mutable_path_point()->set_s(accumulated_s);
+            final_trajectory_points.push_back(first_point);
+            
+            for (size_t i = 1; i < computed_trajectory_points.size(); ++i) {
+                const auto& prev_point = final_trajectory_points.back().path_point();
+                const auto& raw_curr_point = computed_trajectory_points[i];
+                
+                double dist = std::sqrt(std::pow(raw_curr_point.path_point().x() - prev_point.x(), 2) +
+                                        std::pow(raw_curr_point.path_point().y() - prev_point.y(), 2));
+                accumulated_s += dist;
+                
+                ceshi::planning::TrajectoryPoint new_point = raw_curr_point;
+                new_point.mutable_path_point()->set_s(accumulated_s);
+                final_trajectory_points.push_back(new_point);
+            }
+        }
+        
+        std::vector<ceshi::planning::TrajectoryPoint>& optimized_trajectory = 
+            final_trajectory_points.empty() ? computed_trajectory_points : final_trajectory_points;
+        
+        // 7. 将TrajectoryPoint转换为MatrixX5d和MatrixX2d格式
+        size_t traj_size = optimized_trajectory.size();
+        new_x_5d = MatrixX5d::Zero(traj_size, 5);
+        new_u = Eigen::MatrixX2d::Zero(traj_size > 0 ? traj_size - 1 : 0, 2);
+        
+        for (size_t i = 0; i < traj_size; ++i) {
+            new_x_5d(i, 0) = optimized_trajectory[i].x();
+            new_x_5d(i, 1) = optimized_trajectory[i].y();
+            new_x_5d(i, 2) = optimized_trajectory[i].velocity();
+            new_x_5d(i, 3) = optimized_trajectory[i].theta();
+            new_x_5d(i, 4) = optimized_trajectory[i].kappa();
+            
+            // 计算控制输入（加速度和曲率变化率）
+            if (i > 0 && i - 1 < new_u.rows()) {
+                double dt = optimized_trajectory[i].relative_time() - optimized_trajectory[i-1].relative_time();
+                if (dt > 1e-6) {
+                    new_u(i-1, 0) = optimized_trajectory[i].acceleration();
+                    new_u(i-1, 1) = (optimized_trajectory[i].kappa() - optimized_trajectory[i-1].kappa()) / dt;
+                } else {
+                    new_u(i-1, 0) = 0.0;
+                    new_u(i-1, 1) = 0.0;
+                }
+            }
+        }
+        // 找到轨迹中 relative_time 最接近 delta_t 的点来更新状态
+        // 这样可以确保车辆按照正确的时间步长移动
+        if (new_x_5d.rows() > 1) {
+            Vector5d old_state = ego_state_5d;
+            
+            // 找到 relative_time 最接近 delta_t 的点
+            size_t best_idx = 1; // 默认使用第二个点
+            double min_time_diff = std::abs(optimized_trajectory[1].relative_time() - optimized_trajectory[0].relative_time() - delta_t);
+            
+            for (size_t i = 1; i < optimized_trajectory.size(); ++i) {
+                double time_diff = std::abs(optimized_trajectory[i].relative_time() - optimized_trajectory[0].relative_time() - delta_t);
+                if (time_diff < min_time_diff) {
+                    min_time_diff = time_diff;
+                    best_idx = i;
+                }
+            }
+            
+            // 使用找到的点更新状态
+            ego_state_current_5d = new_x_5d.row(best_idx).transpose();
+            ego_state_5d = ego_state_current_5d;
+            
+            double actual_dt = optimized_trajectory[best_idx].relative_time() - optimized_trajectory[0].relative_time();
+            double dist_moved = std::hypot(ego_state_5d[0] - old_state[0], ego_state_5d[1] - old_state[1]);
+            double expected_dist = old_state[2] * actual_dt; // 基于速度和时间计算期望距离
+            
+            SPDLOG_INFO("Using trajectory point[{}] with relative_time={:.3f} (delta_t={:.3f}), dist_moved={:.3f}, expected_dist={:.3f}, velocity={:.3f}", 
+                        best_idx, actual_dt, delta_t, dist_moved, expected_dist, ego_state_5d[2]);
+        } else if (new_x_5d.rows() == 1) {
+            // 如果只有一个点，使用它
+            ego_state_current_5d = new_x_5d.row(0).transpose();
+            ego_state_5d = ego_state_current_5d;
+            SPDLOG_WARN("Only one trajectory point available, vehicle may not move");
+        } else {
+            // 如果轨迹为空，保持当前状态不变
+            ego_state_current_5d = ego_state_5d;
+            SPDLOG_WARN("Empty trajectory, vehicle state unchanged");
+        }
         
         Eigen::MatrixX4d new_x_4d = Eigen::MatrixX4d::Zero(new_x_5d.rows(), 4);
         new_x_4d << new_x_5d.block(0, 0, new_x_5d.rows(), 2),

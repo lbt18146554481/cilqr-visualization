@@ -91,7 +91,7 @@ target_link_libraries(planning_test_execute cilqr_algorithm)
 
 # 添加 algorithm 库的头文件路径
 target_include_directories(planning_test_execute PRIVATE 
-    ${CMAKE_CURRENT_LIST_DIR}/../algorithm/include
+    ${CMAKE_CURRENT_LIST_DIR}/../animation/include  # 包含 common/ 目录
 )
 
 # 添加Eigen3包含路径到target

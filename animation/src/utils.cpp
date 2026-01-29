@@ -8,6 +8,9 @@
 
 #include "matplotlibcpp.h"
 #include "utils.hpp"
+#include "global_config.hpp"
+#include "common/algorithm_config.hpp"
+#include "common/types.hpp"
 
 #include <fmt/core.h>
 #include <spdlog/spdlog.h>
@@ -486,7 +489,7 @@ Eigen::MatrixX4d get_boundary(const Eigen::MatrixX4d& refline, double width) {
 }
 
 // 路径模型传播函数（5维状态空间）
-Vector5d utils::path_model_propagate(const Vector5d& cur_x,
+Vector5d path_model_propagate(const Vector5d& cur_x,
                                      const Eigen::Vector2d& cur_u, double dt) {
     // 状态: [x, y, v, heading, kappa]
     // 控制: [acceleration, dkappa]
@@ -507,10 +510,16 @@ Vector5d utils::path_model_propagate(const Vector5d& cur_x,
 }
 
 // 路径模型线性化（计算A和B矩阵）
-std::tuple<MatrixX5d, Eigen::MatrixX2d> utils::get_path_model_derivatives(
+// 计算路径模型的状态转移矩阵A和控制矩阵B，用于LQR优化
+// A矩阵：∂f/∂x (5x5) - 状态对状态的偏导数
+// B矩阵：∂f/∂u (5x2) - 状态对控制的偏导数
+// x: 状态序列矩阵 (steps x 5)
+// u: 控制序列矩阵 (steps x 2)
+// dt: 时间步长
+// steps: 时间步数
+// 返回: (A矩阵, B矩阵) 的元组
+std::tuple<MatrixX5d, Eigen::MatrixX2d> get_path_model_derivatives(
     const MatrixX5d& x, const Eigen::MatrixX2d& u, double dt, uint32_t steps) {
-    // A矩阵：∂f/∂x (5x5)
-    // B矩阵：∂f/∂u (5x2)
     MatrixX5d df_dx(steps * 5, 5);
     Eigen::MatrixX2d df_du(steps * 5, 2);
 
@@ -550,12 +559,12 @@ std::tuple<MatrixX5d, Eigen::MatrixX2d> utils::get_path_model_derivatives(
 }
 
 // 从参考线计算曲率
-double utils::calc_kappa_from_reference(const ReferenceLine& ref_line, double s) {
-    // 使用三次样条插值计算曲率
-    // kappa = d^2y/dx^2 / (1 + (dy/dx)^2)^(3/2)
-    // 对于参数化曲线 (x(s), y(s))，曲率公式为：
-    // kappa = (x'*y'' - y'*x'') / (x'^2 + y'^2)^(3/2)
-    
+// 根据参考线上给定弧长s的位置，计算该点的曲率值
+// ref_line: 参考线对象，包含spline（三次样条）用于精确计算
+// s: 弧长位置
+// 返回: 该位置的曲率值（1/m），使用三次样条插值和数值微分计算
+// 曲率公式: kappa = (x'*y'' - y'*x'') / (x'^2 + y'^2)^(3/2)
+double calc_kappa_from_reference(const ReferenceLine& ref_line, double s) {
     if (s < 0) s = 0;
     if (s > ref_line.length()) s = ref_line.length();
     
@@ -596,6 +605,98 @@ std::vector<std::vector<double>> get_closed_curve(const Eigen::MatrixX4d& reflin
     }
 
     return closed_curve;
+}
+
+// 数据转换函数实现（可视化层 <-> 算法层）
+cilqr::ReferenceLine convert_to_algo_ref(const ReferenceLine& vis_ref) {
+    cilqr::ReferenceLine algo_ref;
+    algo_ref.x = vis_ref.x;
+    algo_ref.y = vis_ref.y;
+    algo_ref.yaw = vis_ref.yaw;
+    algo_ref.longitude = vis_ref.longitude;
+    return algo_ref;
+}
+
+std::vector<cilqr::RoutingLine> convert_to_algo_routing(
+    const std::vector<RoutingLine>& vis_routing) {
+    std::vector<cilqr::RoutingLine> algo_routing;
+    for (const auto& vis_line : vis_routing) {
+        cilqr::RoutingLine algo_line;
+        algo_line.size = vis_line.size;
+        algo_line.x = vis_line.x;
+        algo_line.y = vis_line.y;
+        algo_line.yaw = vis_line.yaw;
+        algo_routing.push_back(algo_line);
+    }
+    return algo_routing;
+}
+
+cilqr::AlgorithmConfig create_algo_config(const GlobalConfig* const config) {
+    cilqr::AlgorithmConfig algo_config;
+    
+    algo_config.delta_t = config->get_config<double>("delta_t");
+    algo_config.N = config->get_config<int>("lqr/N");
+    algo_config.w_pos = config->get_config<double>("lqr/w_pos");
+    algo_config.w_vel = config->get_config<double>("lqr/w_vel");
+    algo_config.w_heading = config->has_key("lqr/w_heading")
+                           ? config->get_config<double>("lqr/w_heading")
+                           : config->get_config<double>("lqr/w_yaw");
+    algo_config.w_kappa = config->has_key("lqr/w_kappa")
+                         ? config->get_config<double>("lqr/w_kappa")
+                         : algo_config.w_heading;
+    algo_config.w_acc = config->get_config<double>("lqr/w_acc");
+    algo_config.w_dkappa = config->has_key("lqr/w_dkappa")
+                          ? config->get_config<double>("lqr/w_dkappa")
+                          : algo_config.w_acc;
+    algo_config.solve_type = config->get_config<std::string>("lqr/slove_type");
+    algo_config.ref_x_weight = config->has_key("lqr/ref_x_weight")
+                              ? config->get_config<double>("lqr/ref_x_weight")
+                              : 1.0;
+    algo_config.final_x_weight = config->has_key("lqr/final_x_weight")
+                                ? config->get_config<double>("lqr/final_x_weight")
+                                : 10.0;
+    algo_config.uki_init = config->has_key("lqr/uki_init")
+                          ? config->get_config<double>("lqr/uki_init")
+                          : 20.0;
+    algo_config.alm_rho_init = config->get_config<double>("lqr/alm_rho_init");
+    algo_config.alm_gamma = config->get_config<double>("lqr/alm_gamma");
+    algo_config.max_rho = config->get_config<double>("lqr/max_rho");
+    algo_config.max_mu = config->get_config<double>("lqr/max_mu");
+    algo_config.obstacle_exp_q1 = config->get_config<double>("lqr/obstacle_exp_q1");
+    algo_config.obstacle_exp_q2 = config->get_config<double>("lqr/obstacle_exp_q2");
+    algo_config.state_exp_q1 = config->get_config<double>("lqr/state_exp_q1");
+    algo_config.state_exp_q2 = config->get_config<double>("lqr/state_exp_q2");
+    algo_config.use_last_solution = config->get_config<bool>("lqr/use_last_solution");
+    
+    algo_config.max_iter = config->get_config<int>("iteration/max_iter");
+    algo_config.init_lamb = config->get_config<double>("iteration/init_lamb");
+    algo_config.lamb_decay = config->get_config<double>("iteration/lamb_decay");
+    algo_config.lamb_amplify = config->get_config<double>("iteration/lamb_amplify");
+    algo_config.max_lamb = config->get_config<double>("iteration/max_lamb");
+    algo_config.convergence_threshold = config->get_config<double>("iteration/convergence_threshold");
+    algo_config.accept_step_threshold = config->get_config<double>("iteration/accept_step_threshold");
+    
+    algo_config.width = config->get_config<double>("vehicle/width");
+    algo_config.length = config->get_config<double>("vehicle/length");
+    algo_config.velo_max = config->get_config<double>("vehicle/velo_max");
+    algo_config.velo_min = config->get_config<double>("vehicle/velo_min");
+    algo_config.acc_max = config->get_config<double>("vehicle/acc_max");
+    algo_config.acc_min = config->get_config<double>("vehicle/acc_min");
+    algo_config.kappa_max = config->has_key("vehicle/kappa_max")
+                           ? config->get_config<double>("vehicle/kappa_max")
+                           : 0.3;
+    algo_config.kappa_min = config->has_key("vehicle/kappa_min")
+                           ? config->get_config<double>("vehicle/kappa_min")
+                           : -0.3;
+    algo_config.dkappa_max = config->has_key("vehicle/dkappa_max")
+                            ? config->get_config<double>("vehicle/dkappa_max")
+                            : 0.1;
+    algo_config.dkappa_min = config->has_key("vehicle/dkappa_min")
+                            ? config->get_config<double>("vehicle/dkappa_min")
+                            : -0.1;
+    algo_config.d_safe = config->get_config<double>("vehicle/d_safe");
+    
+    return algo_config;
 }
 
 }  // namespace utils

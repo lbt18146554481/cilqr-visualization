@@ -5,7 +5,7 @@
 #pragma once
 
 #include <vector>
-#include "src/planning/common/path/path_point.h"
+#include "src/planning/common/trajectory/trajectory_point.h"
 
 namespace ceshi {
 namespace planning {

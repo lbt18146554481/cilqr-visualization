@@ -14,10 +14,10 @@
 
 #include "utils.hpp"  // 可视化层的类型定义
 #include "global_config.hpp"
-#include "../../algorithm/include/trajectory_optimizer.hpp"
-#include "../../algorithm/include/optimizer_factory.hpp"
-#include "../../algorithm/include/algorithm_config.hpp"
-#include "../../algorithm/include/types.hpp"
+// 注意：此文件已废弃，现在使用 trajectory_smoother_adapter.hpp
+// #include "../../trajectory_smoother/cilqr_lane_change/cilqr_iter_decider.h"
+#include "common/algorithm_config.hpp"
+#include "common/types.hpp"
 
 #include <Eigen/Core>
 #include <tuple>
@@ -47,8 +47,8 @@ class CILQRAdapter {
     // 从GlobalConfig创建AlgorithmConfig
     cilqr::AlgorithmConfig create_algorithm_config(const GlobalConfig* const config);
 
-    // 使用优化器基类接口（参考 trajectory_smoother.cpp 的设计）
-    std::unique_ptr<trajectory_optimizer::TrajectoryOptimizer> optimizer_;
+    // 使用 Decider（对齐 trajectory_smoother.cpp 的设计）
+    std::unique_ptr<ceshi::planning::PathConstrainedIterLqrDeciderAML> cilqr_decider_;
     cilqr::AlgorithmConfig algo_config_;
 };
 
